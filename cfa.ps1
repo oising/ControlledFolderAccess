@@ -4,6 +4,15 @@
 [cmdletbinding()]
 param()
 
+$SCRIPT:authsigCache = @{}
+$SCRIPT:query = @"
+<QueryList>
+  <Query Id="0" Path="Microsoft-Windows-Windows Defender/Operational">
+    <Select Path="Microsoft-Windows-Windows Defender/Operational">*[System[(EventID=1123)]]</Select>
+  </Query>
+</QueryList>
+"@
+
 function Get-AllowedApplication {
     [CmdletBinding()]
     param([string]$Name)
@@ -30,7 +39,33 @@ function Get-AllowedApplication {
     else {
         $filtered = $apps
     }
-    $filtered
+
+    $filtered | foreach-object {
+        $app = $_
+
+        [PSCustomObject]@{
+                Executable = [System.Environment]::ExpandEnvironmentVariables($app).trim()
+        } | ForEach-Object {
+                
+            $key = $_.executable
+
+            # cache authenticode signatures as computing hashes is costly
+            if ($authsigCache[$key] -eq $null) {
+                if (test-path "$key") {
+                    $authsigCache[$key] = Get-AuthenticodeSignature -FilePath $key
+                }
+                else {
+                    write-warning "Executable $key does not exist"
+                }
+            }
+            else {
+                Write-Verbose "authenticode sig cache hit"
+            }
+    
+            $_ | Add-Member -MemberType NoteProperty -Name ExecutableSigned -Value $authsigCache[$key].status -PassThru | `
+                add-member -MemberType NoteProperty -Name IsOSBinary -Value $authsigCache[$key].IsOSBinary -PassThru
+        }
+    }
 }
 
 function Test-AllowedApplication {
@@ -65,14 +100,7 @@ function Test-ControlledFolder {
 
 # Get-MpPreference | select -exp ControlledFolderAccessAllowedApplications | % { Get-AuthenticodeSignature -FilePath $_ }
 
-$SCRIPT:authsigCache = @{}
-$SCRIPT:query = @"
-<QueryList>
-  <Query Id="0" Path="Microsoft-Windows-Windows Defender/Operational">
-    <Select Path="Microsoft-Windows-Windows Defender/Operational">*[System[(EventID=1123)]]</Select>
-  </Query>
-</QueryList>
-"@
+
 
 function Get-BlockedApplication {
     [cmdletbinding()]
@@ -96,10 +124,10 @@ function Get-BlockedApplication {
             [PSCustomObject]@{
                 User    = $User
                 Path    = [System.Environment]::ExpandEnvironmentVariables($Path).trim()
-                Process = [System.Environment]::ExpandEnvironmentVariables($process).trim()
+                Executable = [System.Environment]::ExpandEnvironmentVariables($process).trim()
             } | ForEach-Object {
                 
-                $key = $_.process
+                $key = $_.executable
 
                 # cache authenticode signatures as computing hashes is costly
                 if ($authsigCache[$key] -eq $null) {
@@ -107,15 +135,15 @@ function Get-BlockedApplication {
                         $authsigCache[$key] = Get-AuthenticodeSignature -FilePath $key
                     }
                     else {
-                        write-warning "$key Does not exist"
+                        write-warning "Executable $key does not exist"
                     }
                 }
                 else {
                     Write-Verbose "authenticode sig cache hit"
                 }
     
-                $_ | Add-Member -MemberType NoteProperty -Name ExecutableSigned -Value $authsigCache[$_.process].status -PassThru | `
-                    add-member -MemberType NoteProperty -Name IsOSBinary -Value $authsigCache[$_.process].IsOSBinary -PassThru
+                $_ | Add-Member -MemberType NoteProperty -Name ExecutableSigned -Value $authsigCache[$key].status -PassThru | `
+                    add-member -MemberType NoteProperty -Name IsOSBinary -Value $authsigCache[$key].IsOSBinary -PassThru
             }
         } else {
             write-verbose "$process already in allowed list."
@@ -172,7 +200,7 @@ if ((Get-MpPreference).EnableControlledFolderAccess -ne 1) {
 # prompt for signed files
 # require command line override -IncludeUnsignedExecutables (?)
 
-Get-BlockedApplication
+#Get-BlockedApplication
 
 
 
