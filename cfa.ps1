@@ -101,6 +101,7 @@ function Get-BlockedApplication {
                 
                 $key = $_.process
 
+                # cache authenticode signatures as computing hashes is costly
                 if ($authsigCache[$key] -eq $null) {
                     if (test-path "$key") {
                         $authsigCache[$key] = Get-AuthenticodeSignature -FilePath $key
@@ -122,13 +123,44 @@ function Get-BlockedApplication {
     }
 }
 
-function Add-AllowedApplication {
+function Get-ProtectedFolder {
     [cmdletbinding()]
-    param([string]$FilePath)
+    param(
+        [parameter(position=0, ValueFromPipelineByPropertyName=$true)]
+        [Alias("PSPath")]
+        [string]$Name
+    )
+
+    # TODO: filtering by $Name
+    (Get-MpPreference).ControlledFolderAccessProtectedFolders
 }
 
+function Add-ProtectedFolder {}
+function Remove-ProtectedFolder {}
+
+function Add-AllowedApplication {
+    [cmdletbinding()]
+    param(
+        [Parameter(position=0, ValueFromPipelineByPropertyName=$true)]
+        [Alias("PSPath")]
+        [string]$FilePath
+    )
+
+    if (-not(test-path $FilePath)) {
+        Write-Error "File $FilePath does not exist."
+    } else {
+        $allowed = (Get-MpPreference).ControlledFolderAccessAllowedApplications
+        $allowed += $FilePath
+
+        Set-MpPreference -ControlledFolderAccessAllowedApplications $allowed
+    }
+}
+
+function Remove-AllowedApplication {}
+
+
 #
-#
+# 
 #
 
 if ((Get-MpPreference).EnableControlledFolderAccess -ne 1) {
